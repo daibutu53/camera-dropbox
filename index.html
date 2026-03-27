@@ -38,7 +38,18 @@
   .capture-btn .icon { font-size: 36px; }
   .capture-btn .label { font-size: 14px; }
   .capture-btn:disabled { opacity: 0.4; }
-  #fileInput { display: none; }
+  .album-btn {
+    margin-top: 16px; padding: 14px 28px; border-radius: 14px;
+    border: 2px solid #0061fe; background: transparent;
+    color: #7eb8ff; font-size: 15px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 0.15s;
+  }
+  .album-btn:active { transform: scale(0.97); }
+  .album-btn .icon { font-size: 20px; }
+  .album-btn .label { font-size: 14px; }
+  #fileInput, #albumInput { display: none; }
   .auth-btn {
     padding: 16px 32px; border-radius: 14px; border: none;
     background: linear-gradient(135deg, #0061fe, #0044b3);
@@ -375,7 +386,12 @@ function renderMainScreen() {
       <span class="icon">📷</span>
       <span class="label">撮影</span>
     </button>
+    <button class="album-btn" id="albumBtn">
+      <span class="icon">🖼</span>
+      <span class="label">アルバムから選択</span>
+    </button>
     <input type="file" id="fileInput" accept="image/*" capture="environment">
+    <input type="file" id="albumInput" accept="image/*" multiple>
     <div class="status" id="status"></div>
     <div class="history" id="history"></div>
     <button class="logout-btn" id="logoutBtn">ログアウト</button>
@@ -385,9 +401,19 @@ function renderMainScreen() {
   document.getElementById('captureBtn').addEventListener('click', () => {
     document.getElementById('fileInput').click();
   });
+  document.getElementById('albumBtn').addEventListener('click', () => {
+    document.getElementById('albumInput').click();
+  });
   document.getElementById('fileInput').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) uploadToDropbox(file);
+    e.target.value = '';
+  });
+  document.getElementById('albumInput').addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files);
+    for (const file of files) {
+      await uploadToDropbox(file);
+    }
     e.target.value = '';
   });
   document.getElementById('logoutBtn').addEventListener('click', () => {
