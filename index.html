@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CamBox">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📷</text></svg>">
+<title>Camera to Dropbox</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+    background: #1a1a2e;
+    color: #fff;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  h1 { font-size: 22px; margin-bottom: 8px; }
+  .subtitle { font-size: 14px; color: #888; margin-bottom: 40px; }
+  .capture-btn {
+    width: 140px; height: 140px; border-radius: 50%;
+    border: 4px solid #0061fe;
+    background: linear-gradient(135deg, #0061fe, #0044b3);
+    color: #fff; font-size: 18px; font-weight: 600; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 6px;
+    box-shadow: 0 4px 30px rgba(0,97,254,0.4);
+    transition: transform 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .capture-btn:active { transform: scale(0.95); }
+  .capture-btn .icon { font-size: 36px; }
+  .capture-btn .label { font-size: 14px; }
+  .capture-btn:disabled { opacity: 0.4; }
+  #fileInput { display: none; }
+  .auth-btn {
+    padding: 16px 32px; border-radius: 14px; border: none;
+    background: linear-gradient(135deg, #0061fe, #0044b3);
+    color: #fff; font-size: 16px; font-weight: 600; cursor: pointer;
+    box-shadow: 0 4px 30px rgba(0,97,254,0.4);
+    -webkit-tap-highlight-color: transparent;
+  }
+  .auth-btn:active { transform: scale(0.97); }
+  .logout-btn {
+    margin-top: 12px; background: none; border: none;
+    color: #666; font-size: 13px; cursor: pointer;
+    text-decoration: underline;
+  }
+  .status { margin-top: 30px; text-align: center; min-height: 60px; }
+  .status-msg {
+    padding: 12px 20px; border-radius: 12px; font-size: 14px;
+    margin-bottom: 8px; animation: fadeIn 0.3s;
+  }
+  .status-msg.uploading { background: #2a2a4a; color: #7eb8ff; }
+  .status-msg.success { background: #1a3a1a; color: #6fcf6f; }
+  .status-msg.error { background: #3a1a1a; color: #ff6f6f; }
+  .history { margin-top: 30px; width: 100%; max-width: 360px; }
+  .history h3 { font-size: 14px; color: #666; margin-bottom: 10px; }
+  .history-item {
+    display: flex; align-items: center; gap: 10px; padding: 10px;
+    background: #2a2a3e; border-radius: 10px; margin-bottom: 6px;
+    font-size: 13px; animation: fadeIn 0.3s;
+  }
+  .history-item img { width: 44px; height: 44px; border-radius: 8px; object-fit: cover; }
+  .history-item .info { flex: 1; }
+  .history-item .name { color: #ccc; }
+  .history-item .time { color: #666; font-size: 11px; }
+  .settings { position: fixed; top: 16px; right: 16px; }
+  .settings-btn {
+    background: #2a2a3e; border: none; color: #888;
+    font-size: 20px; width: 36px; height: 36px;
+    border-radius: 50%; cursor: pointer;
+  }
+  .modal {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7); z-index: 10;
+    align-items: center; justify-content: center; padding: 20px;
+  }
+  .modal.open { display: flex; }
+  .modal-content {
+    background: #2a2a3e; border-radius: 16px; padding: 24px;
+    width: 100%; max-width: 340px;
+  }
+  .modal-content h2 { font-size: 18px; margin-bottom: 16px; }
+  .modal-content label { font-size: 13px; color: #888; display: block; margin-bottom: 4px; }
+  .modal-content input, .modal-content select {
+    width: 100%; padding: 10px; border-radius: 8px;
+    border: 1px solid #444; background: #1a1a2e;
+    color: #fff; font-size: 14px; margin-bottom: 14px;
+  }
+  .modal-content .btn-row { display: flex; gap: 10px; margin-top: 6px; }
+  .modal-content button {
+    flex: 1; padding: 10px; border-radius: 10px; border: none;
+    font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  .btn-save { background: #0061fe; color: #fff; }
+  .btn-cancel { background: #444; color: #ccc; }
+  .user-info { font-size: 13px; color: #888; margin-bottom: 20px; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+</style>
+</head>
+<body>
+
+<div id="app"></div>
+
+<div class="settings" id="settingsArea" style="display:none;">
+  <button class="settings-btn" id="settingsBtn">⚙</button>
+</div>
+
+<div class="modal" id="modal">
+  <div class="modal-content">
+    <h2>設定</h2>
+    <label>保存先フォルダ</label>
+    <input type="text" id="folderInput" placeholder="/CameraUploads">
+    <label>画像品質</label>
+    <select id="qualityInput">
+      <option value="1">最高画質（元のまま）</option>
+      <option value="0.8" selected>高画質（80%）</option>
+      <option value="0.5">中画質（50%・軽量）</option>
+    </select>
+    <div class="btn-row">
+      <button class="btn-cancel" id="cancelBtn">キャンセル</button>
+      <button class="btn-save" id="saveBtn">保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const APP_KEY = 'z24s4o9exwouamy';
+const REDIRECT_URI = 'https://daibutu53.github.io/camera-dropbox';
+
+// --- PKCE helpers ---
+function generateRandomString(length) {
+  const arr = new Uint8Array(length);
+  crypto.getRandomValues(arr);
+  return Array.from(arr, b => b.toString(16).padStart(2, '0')).join('').slice(0, length);
+}
+
+async function generateCodeChallenge(verifier) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(verifier);
+  const digest = await crypto.subtle.digest('SHA-256', data);
+  return btoa(String.fromCharCode(...new Uint8Array(digest)))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+// --- Token management ---
+function getTokens() {
+  const data = localStorage.getItem('dbx_auth');
+  if (!data) return null;
+  return JSON.parse(data);
+}
+
+function saveTokens(tokens) {
+  tokens.saved_at = Date.now();
+  localStorage.setItem('dbx_auth', JSON.stringify(tokens));
+}
+
+function clearTokens() {
+  localStorage.removeItem('dbx_auth');
+  localStorage.removeItem('dbx_pkce_verifier');
+}
+
+function isTokenExpired(tokens) {
+  if (!tokens || !tokens.saved_at || !tokens.expires_in) return true;
+  const elapsed = (Date.now() - tokens.saved_at) / 1000;
+  return elapsed >= (tokens.expires_in - 300); // refresh 5 min early
+}
+
+async function refreshAccessToken(tokens) {
+  const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: tokens.refresh_token,
+      client_id: APP_KEY
+    })
+  });
+  if (!res.ok) throw new Error('トークンの更新に失敗しました。再ログインしてください。');
+  const data = await res.json();
+  const updated = {
+    access_token: data.access_token,
+    refresh_token: tokens.refresh_token,
+    expires_in: data.expires_in
+  };
+  saveTokens(updated);
+  return updated;
+}
+
+async function getValidAccessToken() {
+  let tokens = getTokens();
+  if (!tokens) throw new Error('未認証');
+  if (isTokenExpired(tokens)) {
+    tokens = await refreshAccessToken(tokens);
+  }
+  return tokens.access_token;
+}
+
+// --- OAuth2 PKCE flow ---
+async function startAuth() {
+  const verifier = generateRandomString(64);
+  localStorage.setItem('dbx_pkce_verifier', verifier);
+  const challenge = await generateCodeChallenge(verifier);
+
+  const params = new URLSearchParams({
+    client_id: APP_KEY,
+    response_type: 'code',
+    redirect_uri: REDIRECT_URI,
+    code_challenge: challenge,
+    code_challenge_method: 'S256',
+    token_access_type: 'offline'
+  });
+
+  window.location.href = `https://www.dropbox.com/oauth2/authorize?${params}`;
+}
+
+async function handleAuthCallback(code) {
+  const verifier = localStorage.getItem('dbx_pkce_verifier');
+  if (!verifier) throw new Error('PKCE verifier not found');
+
+  const res = await fetch('https://api.dropboxapi.com/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code: code,
+      grant_type: 'authorization_code',
+      client_id: APP_KEY,
+      redirect_uri: REDIRECT_URI,
+      code_verifier: verifier
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error_description || 'Authorization failed');
+  }
+
+  const data = await res.json();
+  saveTokens({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    expires_in: data.expires_in
+  });
+  localStorage.removeItem('dbx_pkce_verifier');
+
+  // Clean URL
+  window.history.replaceState({}, document.title, REDIRECT_URI);
+}
+
+// --- Config ---
+function getFolder() {
+  return localStorage.getItem('dbx_folder') || '/CameraUploads';
+}
+function getQuality() {
+  return parseFloat(localStorage.getItem('dbx_quality') || '0.8');
+}
+
+// --- UI ---
+function showStatus(msg, type) {
+  const el = document.getElementById('status');
+  if (!el) return;
+  el.innerHTML = `<div class="status-msg ${type}">${msg}</div>`;
+}
+
+function addHistory(name, thumbUrl) {
+  const hist = document.getElementById('history');
+  if (!hist) return;
+  if (!hist.querySelector('h3')) {
+    hist.innerHTML = '<h3>アップロード履歴</h3>';
+  }
+  const time = new Date().toLocaleTimeString('ja-JP');
+  const item = document.createElement('div');
+  item.className = 'history-item';
+  item.innerHTML = `
+    <img src="${thumbUrl}" alt="">
+    <div class="info">
+      <div class="name">${name}</div>
+      <div class="time">${time}</div>
+    </div>
+    <span style="color:#6fcf6f">✓</span>`;
+  hist.insertBefore(item, hist.querySelector('.history-item'));
+}
+
+function generateFilename() {
+  const now = new Date();
+  const pad = (n) => String(n).padStart(2, '0');
+  return `IMG_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.jpg`;
+}
+
+async function compressImage(file, quality) {
+  if (quality >= 1) return file;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      canvas.getContext('2d').drawImage(img, 0, 0);
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', quality);
+      URL.revokeObjectURL(img.src);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+async function uploadToDropbox(file) {
+  const filename = generateFilename();
+  const folder = getFolder();
+  const path = `${folder}/${filename}`;
+
+  showStatus(`アップロード中... ${filename}`, 'uploading');
+
+  try {
+    const accessToken = await getValidAccessToken();
+    const compressed = await compressImage(file, getQuality());
+
+    const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Dropbox-API-Arg': JSON.stringify({
+          path: path,
+          mode: 'add',
+          autorename: true,
+          mute: false
+        }),
+        'Content-Type': 'application/octet-stream'
+      },
+      body: compressed
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      if (err.error_summary && err.error_summary.includes('expired_access_token')) {
+        clearTokens();
+        renderApp();
+        showStatus('セッションが切れました。再ログインしてください。', 'error');
+        return;
+      }
+      throw new Error(err.error_summary || res.statusText);
+    }
+
+    const data = await res.json();
+    const thumbUrl = URL.createObjectURL(compressed);
+    showStatus(`アップロード完了！ ${data.name}`, 'success');
+    addHistory(data.name, thumbUrl);
+  } catch (e) {
+    showStatus(`エラー: ${e.message}`, 'error');
+  }
+}
+
+function renderLoginScreen() {
+  document.getElementById('app').innerHTML = `
+    <h1>Camera to Dropbox</h1>
+    <p class="subtitle">撮影 → 即アップロード</p>
+    <button class="auth-btn" id="authBtn">Dropbox にログイン</button>
+    <p style="margin-top:20px; font-size:12px; color:#555;">初回のみ認証が必要です</p>
+  `;
+  document.getElementById('settingsArea').style.display = 'none';
+  document.getElementById('authBtn').addEventListener('click', startAuth);
+}
+
+function renderMainScreen() {
+  document.getElementById('app').innerHTML = `
+    <h1>Camera to Dropbox</h1>
+    <p class="subtitle">撮影 → 即アップロード</p>
+    <button class="capture-btn" id="captureBtn">
+      <span class="icon">📷</span>
+      <span class="label">撮影</span>
+    </button>
+    <input type="file" id="fileInput" accept="image/*" capture="environment">
+    <div class="status" id="status"></div>
+    <div class="history" id="history"></div>
+    <button class="logout-btn" id="logoutBtn">ログアウト</button>
+  `;
+  document.getElementById('settingsArea').style.display = 'block';
+
+  document.getElementById('captureBtn').addEventListener('click', () => {
+    document.getElementById('fileInput').click();
+  });
+  document.getElementById('fileInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) uploadToDropbox(file);
+    e.target.value = '';
+  });
+  document.getElementById('logoutBtn').addEventListener('click', () => {
+    clearTokens();
+    renderApp();
+  });
+}
+
+function renderApp() {
+  const tokens = getTokens();
+  if (tokens && tokens.refresh_token) {
+    renderMainScreen();
+  } else {
+    renderLoginScreen();
+  }
+}
+
+// --- Settings modal ---
+document.getElementById('settingsBtn').addEventListener('click', () => {
+  document.getElementById('folderInput').value = getFolder();
+  document.getElementById('qualityInput').value = String(getQuality());
+  document.getElementById('modal').classList.add('open');
+});
+document.getElementById('cancelBtn').addEventListener('click', () => {
+  document.getElementById('modal').classList.remove('open');
+});
+document.getElementById('saveBtn').addEventListener('click', () => {
+  localStorage.setItem('dbx_folder', document.getElementById('folderInput').value.trim() || '/CameraUploads');
+  localStorage.setItem('dbx_quality', document.getElementById('qualityInput').value);
+  document.getElementById('modal').classList.remove('open');
+  showStatus('設定を保存しました', 'success');
+});
+
+// --- Init ---
+(async function init() {
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+
+  if (code) {
+    try {
+      document.getElementById('app').innerHTML = '<p class="subtitle">認証中...</p>';
+      await handleAuthCallback(code);
+    } catch (e) {
+      document.getElementById('app').innerHTML = `<p class="subtitle" style="color:#ff6f6f;">認証エラー: ${e.message}</p>`;
+      return;
+    }
+  }
+
+  renderApp();
+})();
+</script>
+</body>
+</html>
