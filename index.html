@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-title" content="CamBox">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📷</text></svg>">
 <title>Camera to Dropbox</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -38,18 +39,26 @@
   .capture-btn .icon { font-size: 36px; }
   .capture-btn .label { font-size: 14px; }
   .capture-btn:disabled { opacity: 0.4; }
-  .album-btn {
-    margin-top: 16px; padding: 14px 28px; border-radius: 14px;
+  .btn-row-main {
+    display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap;
+    justify-content: center;
+  }
+  .sub-btn {
+    padding: 14px 20px; border-radius: 14px;
     border: 2px solid #0061fe; background: transparent;
     color: #7eb8ff; font-size: 15px; font-weight: 600; cursor: pointer;
     display: flex; align-items: center; justify-content: center; gap: 8px;
     -webkit-tap-highlight-color: transparent;
     transition: transform 0.15s;
   }
-  .album-btn:active { transform: scale(0.97); }
-  .album-btn .icon { font-size: 20px; }
-  .album-btn .label { font-size: 14px; }
-  #fileInput, #albumInput { display: none; }
+  .sub-btn:active { transform: scale(0.97); }
+  .sub-btn .icon { font-size: 20px; }
+  .sub-btn .label { font-size: 14px; }
+  .scan-btn {
+    border-color: #ff9800;
+    color: #ffcc80;
+  }
+  #fileInput, #albumInput, #scanInput { display: none; }
   .auth-btn {
     padding: 16px 32px; border-radius: 14px; border: none;
     background: linear-gradient(135deg, #0061fe, #0044b3);
@@ -96,7 +105,7 @@
   .modal.open { display: flex; }
   .modal-content {
     background: #2a2a3e; border-radius: 16px; padding: 24px;
-    width: 100%; max-width: 340px;
+    width: 100%; max-width: 340px; max-height: 90vh; overflow-y: auto;
   }
   .modal-content h2 { font-size: 18px; margin-bottom: 16px; }
   .modal-content label { font-size: 13px; color: #888; display: block; margin-bottom: 4px; }
@@ -112,7 +121,26 @@
   }
   .btn-save { background: #0061fe; color: #fff; }
   .btn-cancel { background: #444; color: #ccc; }
-  .user-info { font-size: 13px; color: #888; margin-bottom: 20px; }
+  /* OCR result modal */
+  .ocr-result {
+    background: #1a1a2e; border: 1px solid #444; border-radius: 10px;
+    padding: 14px; margin-top: 12px; margin-bottom: 14px;
+    font-size: 14px; color: #ddd; line-height: 1.6;
+    white-space: pre-wrap; word-break: break-all;
+    max-height: 300px; overflow-y: auto;
+    user-select: text; -webkit-user-select: text;
+  }
+  .btn-copy {
+    width: 100%; padding: 12px; border-radius: 10px; border: none;
+    background: #0061fe; color: #fff; font-size: 14px;
+    font-weight: 600; cursor: pointer; margin-bottom: 8px;
+  }
+  .btn-copy.copied { background: #1a3a1a; color: #6fcf6f; }
+  .btn-close-ocr {
+    width: 100%; padding: 12px; border-radius: 10px; border: none;
+    background: #444; color: #ccc; font-size: 14px;
+    font-weight: 600; cursor: pointer;
+  }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 </style>
 </head>
@@ -135,10 +163,25 @@
       <option value="0.8" selected>高画質（80%）</option>
       <option value="0.5">中画質（50%・軽量）</option>
     </select>
+    <label>OCR言語</label>
+    <select id="ocrLangInput">
+      <option value="jpn+eng" selected>日本語 + 英語</option>
+      <option value="jpn">日本語のみ</option>
+      <option value="eng">英語のみ</option>
+    </select>
     <div class="btn-row">
       <button class="btn-cancel" id="cancelBtn">キャンセル</button>
       <button class="btn-save" id="saveBtn">保存</button>
     </div>
+  </div>
+</div>
+
+<div class="modal" id="ocrModal">
+  <div class="modal-content">
+    <h2>スキャン結果</h2>
+    <div class="ocr-result" id="ocrText"></div>
+    <button class="btn-copy" id="copyBtn">テキストをコピー</button>
+    <button class="btn-close-ocr" id="closeOcrBtn">閉じる</button>
   </div>
 </div>
 
@@ -181,7 +224,7 @@ function clearTokens() {
 function isTokenExpired(tokens) {
   if (!tokens || !tokens.saved_at || !tokens.expires_in) return true;
   const elapsed = (Date.now() - tokens.saved_at) / 1000;
-  return elapsed >= (tokens.expires_in - 300); // refresh 5 min early
+  return elapsed >= (tokens.expires_in - 300);
 }
 
 async function refreshAccessToken(tokens) {
@@ -260,8 +303,6 @@ async function handleAuthCallback(code) {
     expires_in: data.expires_in
   });
   localStorage.removeItem('dbx_pkce_verifier');
-
-  // Clean URL
   window.history.replaceState({}, document.title, REDIRECT_URI);
 }
 
@@ -272,6 +313,9 @@ function getFolder() {
 function getQuality() {
   return parseFloat(localStorage.getItem('dbx_quality') || '0.8');
 }
+function getOcrLang() {
+  return localStorage.getItem('dbx_ocr_lang') || 'jpn+eng';
+}
 
 // --- UI ---
 function showStatus(msg, type) {
@@ -280,11 +324,11 @@ function showStatus(msg, type) {
   el.innerHTML = `<div class="status-msg ${type}">${msg}</div>`;
 }
 
-function addHistory(name, thumbUrl) {
+function addHistory(name, thumbUrl, extra) {
   const hist = document.getElementById('history');
   if (!hist) return;
   if (!hist.querySelector('h3')) {
-    hist.innerHTML = '<h3>アップロード履歴</h3>';
+    hist.innerHTML = '<h3>履歴</h3>';
   }
   const time = new Date().toLocaleTimeString('ja-JP');
   const item = document.createElement('div');
@@ -293,16 +337,16 @@ function addHistory(name, thumbUrl) {
     <img src="${thumbUrl}" alt="">
     <div class="info">
       <div class="name">${name}</div>
-      <div class="time">${time}</div>
+      <div class="time">${time}${extra ? ' · ' + extra : ''}</div>
     </div>
     <span style="color:#6fcf6f">✓</span>`;
   hist.insertBefore(item, hist.querySelector('.history-item'));
 }
 
-function generateFilename() {
+function generateFilename(prefix) {
   const now = new Date();
   const pad = (n) => String(n).padStart(2, '0');
-  return `IMG_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.jpg`;
+  return `${prefix}_${now.getFullYear()}${pad(now.getMonth()+1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.jpg`;
 }
 
 async function compressImage(file, quality) {
@@ -321,8 +365,8 @@ async function compressImage(file, quality) {
   });
 }
 
-async function uploadToDropbox(file) {
-  const filename = generateFilename();
+async function uploadToDropbox(file, prefix) {
+  const filename = generateFilename(prefix || 'IMG');
   const folder = getFolder();
   const path = `${folder}/${filename}`;
 
@@ -353,24 +397,90 @@ async function uploadToDropbox(file) {
         clearTokens();
         renderApp();
         showStatus('セッションが切れました。再ログインしてください。', 'error');
-        return;
+        return null;
       }
       throw new Error(err.error_summary || res.statusText);
     }
 
     const data = await res.json();
     const thumbUrl = URL.createObjectURL(compressed);
-    showStatus(`アップロード完了！ ${data.name}`, 'success');
-    addHistory(data.name, thumbUrl);
+    return { name: data.name, thumbUrl };
   } catch (e) {
     showStatus(`エラー: ${e.message}`, 'error');
+    return null;
+  }
+}
+
+// --- OCR ---
+async function runOCR(file) {
+  const lang = getOcrLang();
+  showStatus('文字認識中...（初回は少し時間がかかります）', 'uploading');
+  const { data } = await Tesseract.recognize(file, lang, {
+    logger: (m) => {
+      if (m.status === 'recognizing text') {
+        const pct = Math.round((m.progress || 0) * 100);
+        showStatus(`文字認識中... ${pct}%`, 'uploading');
+      }
+    }
+  });
+  return data.text.trim();
+}
+
+function showOCRResult(text) {
+  document.getElementById('ocrText').textContent = text || '（テキストを検出できませんでした）';
+  document.getElementById('ocrModal').classList.add('open');
+  const copyBtn = document.getElementById('copyBtn');
+  copyBtn.textContent = 'テキストをコピー';
+  copyBtn.classList.remove('copied');
+}
+
+// --- Scan flow: upload + OCR ---
+async function handleScan(file) {
+  const result = await uploadToDropbox(file, 'SCAN');
+  if (!result) return;
+
+  try {
+    const ocrText = await runOCR(file);
+    showStatus(`スキャン完了！ ${result.name}`, 'success');
+    addHistory(result.name, result.thumbUrl, 'OCR済');
+
+    if (ocrText) {
+      // Also upload OCR text to Dropbox
+      const txtFilename = result.name.replace(/\.jpg$/, '.txt');
+      const folder = getFolder();
+      const txtPath = `${folder}/${txtFilename}`;
+      try {
+        const accessToken = await getValidAccessToken();
+        await fetch('https://content.dropboxapi.com/2/files/upload', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Dropbox-API-Arg': JSON.stringify({
+              path: txtPath,
+              mode: 'add',
+              autorename: true,
+              mute: false
+            }),
+            'Content-Type': 'application/octet-stream'
+          },
+          body: new Blob([ocrText], { type: 'text/plain' })
+        });
+      } catch (_) { /* text upload is best-effort */ }
+
+      showOCRResult(ocrText);
+    } else {
+      showOCRResult('');
+    }
+  } catch (e) {
+    showStatus(`OCRエラー: ${e.message}`, 'error');
+    addHistory(result.name, result.thumbUrl, 'OCR失敗');
   }
 }
 
 function renderLoginScreen() {
   document.getElementById('app').innerHTML = `
     <h1>Camera to Dropbox</h1>
-    <p class="subtitle">撮影 → 即アップロード</p>
+    <p class="subtitle">撮影・スキャン → Dropbox</p>
     <button class="auth-btn" id="authBtn">Dropbox にログイン</button>
     <p style="margin-top:20px; font-size:12px; color:#555;">初回のみ認証が必要です</p>
   `;
@@ -381,17 +491,24 @@ function renderLoginScreen() {
 function renderMainScreen() {
   document.getElementById('app').innerHTML = `
     <h1>Camera to Dropbox</h1>
-    <p class="subtitle">撮影 → 即アップロード</p>
+    <p class="subtitle">撮影・スキャン → Dropbox</p>
     <button class="capture-btn" id="captureBtn">
       <span class="icon">📷</span>
       <span class="label">撮影</span>
     </button>
-    <button class="album-btn" id="albumBtn">
-      <span class="icon">🖼</span>
-      <span class="label">アルバムから選択</span>
-    </button>
+    <div class="btn-row-main">
+      <button class="sub-btn" id="albumBtn">
+        <span class="icon">🖼</span>
+        <span class="label">アルバム</span>
+      </button>
+      <button class="sub-btn scan-btn" id="scanBtn">
+        <span class="icon">📄</span>
+        <span class="label">スキャン</span>
+      </button>
+    </div>
     <input type="file" id="fileInput" accept="image/*" capture="environment">
     <input type="file" id="albumInput" accept="image/*" multiple>
+    <input type="file" id="scanInput" accept="image/*" capture="environment">
     <div class="status" id="status"></div>
     <div class="history" id="history"></div>
     <button class="logout-btn" id="logoutBtn">ログアウト</button>
@@ -404,16 +521,34 @@ function renderMainScreen() {
   document.getElementById('albumBtn').addEventListener('click', () => {
     document.getElementById('albumInput').click();
   });
-  document.getElementById('fileInput').addEventListener('change', (e) => {
+  document.getElementById('scanBtn').addEventListener('click', () => {
+    document.getElementById('scanInput').click();
+  });
+  document.getElementById('fileInput').addEventListener('change', async (e) => {
     const file = e.target.files[0];
-    if (file) uploadToDropbox(file);
+    if (file) {
+      const result = await uploadToDropbox(file, 'IMG');
+      if (result) {
+        showStatus(`アップロード完了！ ${result.name}`, 'success');
+        addHistory(result.name, result.thumbUrl);
+      }
+    }
     e.target.value = '';
   });
   document.getElementById('albumInput').addEventListener('change', async (e) => {
     const files = Array.from(e.target.files);
     for (const file of files) {
-      await uploadToDropbox(file);
+      const result = await uploadToDropbox(file, 'IMG');
+      if (result) {
+        showStatus(`アップロード完了！ ${result.name}`, 'success');
+        addHistory(result.name, result.thumbUrl);
+      }
     }
+    e.target.value = '';
+  });
+  document.getElementById('scanInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) handleScan(file);
     e.target.value = '';
   });
   document.getElementById('logoutBtn').addEventListener('click', () => {
@@ -435,6 +570,7 @@ function renderApp() {
 document.getElementById('settingsBtn').addEventListener('click', () => {
   document.getElementById('folderInput').value = getFolder();
   document.getElementById('qualityInput').value = String(getQuality());
+  document.getElementById('ocrLangInput').value = getOcrLang();
   document.getElementById('modal').classList.add('open');
 });
 document.getElementById('cancelBtn').addEventListener('click', () => {
@@ -443,8 +579,34 @@ document.getElementById('cancelBtn').addEventListener('click', () => {
 document.getElementById('saveBtn').addEventListener('click', () => {
   localStorage.setItem('dbx_folder', document.getElementById('folderInput').value.trim() || '/CameraUploads');
   localStorage.setItem('dbx_quality', document.getElementById('qualityInput').value);
+  localStorage.setItem('dbx_ocr_lang', document.getElementById('ocrLangInput').value);
   document.getElementById('modal').classList.remove('open');
   showStatus('設定を保存しました', 'success');
+});
+
+// --- OCR modal ---
+document.getElementById('copyBtn').addEventListener('click', async () => {
+  const text = document.getElementById('ocrText').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'コピーしました！';
+    btn.classList.add('copied');
+  } catch (_) {
+    // fallback
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = 'コピーしました！';
+    btn.classList.add('copied');
+  }
+});
+document.getElementById('closeOcrBtn').addEventListener('click', () => {
+  document.getElementById('ocrModal').classList.remove('open');
 });
 
 // --- Init ---
